@@ -1,0 +1,7 @@
+{
+  "DISCORD_TOKEN": "MTIzOTcyMjQxNjYzNzIxNDczMQ.GGAaKo.vejsqWoNxBktP6dNqc67Be09A-6kqOQQpCkYu4",
+  "APP_ID": "1239722416637214731",
+  "PUBLIC_KEY": "16952d706c92ee94f42cc7ee0ebfaee66149eb48a50be3440ea3c67675a396ad",
+  "CONNECTION_STRING": "User ID=postgres;Password=1234;Server=localhost;Port=5432;Database=BotDb",
+  "LOBBY_CHANNEL_ID": "1240660490175254538"
+}
