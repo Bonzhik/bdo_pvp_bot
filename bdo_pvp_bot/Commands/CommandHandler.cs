@@ -66,6 +66,8 @@ namespace bdo_pvp_bot.Commands
                 case lobbyId:
                     await message.DeleteAsync();
                     break;
+                default:
+                    break;
             }
         }
         private async Task HandleReactionAsync(Cacheable<IUserMessage, ulong> messageCache, Cacheable<IMessageChannel, ulong> channelCache, SocketReaction reaction)
@@ -116,12 +118,13 @@ namespace bdo_pvp_bot.Commands
                     await processor.SelectClassMenuProcess(component);
                 else if (ccreateCharRedex.IsMatch(component.Data.CustomId))
                     await processor.EndAddCharacterAsync(component);
+
             }
         }
 
         private async Task LobbyMessage()
         {
-            ulong channelId = 1240660490175254538;
+            ulong channelId = 1242487556625403926;
             var channel = _client.GetChannel(channelId) as IMessageChannel;
             var messageCheck = await channel.GetMessagesAsync().ToListAsync();
 
