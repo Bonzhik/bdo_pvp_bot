@@ -14,10 +14,14 @@ namespace bdo_pvp_bot.Commands.Queue
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly QueueHelper _queueHelper;
 
-        private static readonly List<User> queue = new List<User>();
-        private const int TeamSize = 3;
+        private static readonly List<List<User>> queue = new List<List<User>>();
+        private const int TeamSize = 2;
         private const int MatchSize = TeamSize * 2;
-        private static bool isAnalyzing = false;
+        private bool isAnalyzing = false;
+        private bool isAnalyzingRunning = false;
+        private int maxEloDifference = 100;
+        private const int EloDifferenceIncrement = 10;
+        private static Dictionary<ulong, (List<IUser> team, IUser initiator)> PendingConfirmations = new Dictionary<ulong, (List<IUser> team, IUser initiator)>();
 
         public QueueModule(SolareService solareService, UserService userService, IServiceScopeFactory scopeFactory, QueueHelper queueHelper)
         {
@@ -26,6 +30,130 @@ namespace bdo_pvp_bot.Commands.Queue
             _scopeFactory = scopeFactory;
             _queueHelper = queueHelper;
 
+        }
+
+
+        [SlashCommand("queue-duo", "Поиск вдвоем")]
+        public async Task QueueDuo(IUser user)
+        {
+            Log.Information($"Попытка создать пати {Context.User.GlobalName}, {user.GlobalName}");
+
+            var initiator = Context.User;
+
+            if ( user.Id == initiator.Id )
+            {
+                await RespondAsync("Нельзя пригласить себя", ephemeral: true);
+                return;
+            }
+
+            var team = new List<IUser> { initiator, user };
+
+            await RespondAsync("Приглашение отправлены", ephemeral: true);
+
+            await SendConfirmationRequest(team, initiator);
+        }
+
+        [SlashCommand("queue-trio", "Поиск втроём")]
+        public async Task QueueTrio(IUser user1, IUser user2)
+        {
+            Log.Information($"Попытка создать пати {Context.User.GlobalName}, {user1.GlobalName}, {user2.GlobalName}");
+
+            var initiator = Context.User;
+
+            if( initiator.Id == user1.Id || initiator.Id == user2.Id || user1.Id == user2.Id)
+            {
+                await RespondAsync("Команда должна состоять из уникальных игроков", ephemeral: true);
+                return;
+            }
+
+            var team = new List<IUser> { initiator, user1, user2 };
+
+            await RespondAsync("Приглашение отправлены", ephemeral: true);
+
+            await SendConfirmationRequest(team, initiator);
+        }
+
+        private async Task SendConfirmationRequest(List<IUser> team, IUser initiator)
+        {
+            foreach (var user in team.Skip(1))
+            {
+                var component = new ComponentBuilder()
+                    .WithButton("Принять", $"confirm_{user.Id}", ButtonStyle.Success)
+                    .WithButton("Отклонить", $"decline_{user.Id}", ButtonStyle.Danger)
+                    .Build();
+
+                await user.SendMessageAsync($"Вы были приглашены в команду {initiator.Username}. Принять приглашение?", components: component);
+
+                PendingConfirmations[user.Id] = (team, initiator);
+            }
+        }
+
+        [ComponentInteraction("confirm_*")]
+        public async Task ConfirmAsync(string userIdStr)
+        {
+            var userId = ulong.Parse(userIdStr);
+            if (PendingConfirmations.TryGetValue(userId, out var info))
+            {
+                var (team, initiator) = info;
+                PendingConfirmations.Remove(userId);
+
+                if (team.All(u => u.Id == initiator.Id || !PendingConfirmations.ContainsKey(u.Id)))
+                {
+                    List<User> users = new List<User>();
+                    foreach(var user in team)
+                    {
+                        var userTeam = await _userService.FindAsync(user.Id);
+                        if (queue.Any(team => team.Any(u => u.DiscordId == user.Id)))
+                        {
+                            await initiator.SendMessageAsync($"{user.GlobalName} уже находится в очереди. Поиск не будет запущен");
+                            return;
+                        }
+                        if (userTeam.IsInMatch == true)
+                        {
+                            await initiator.SendMessageAsync($"{user.GlobalName} уже находится в матче. Поиск не будет запущен");
+                            return;
+                        }
+                        if (users.Any(u => u.CurrentCharacter.Class.Name == userTeam.CurrentCharacter.Class.Name && u.CurrentCharacter.ClassType == userTeam.CurrentCharacter.ClassType))
+                        {
+                            await initiator.SendMessageAsync($"В команде не должно быть одинаковых персонажей");
+                            return;
+                        }
+                        users.Add(userTeam);
+                    }
+                    try
+                    {
+                        queue.Add(users);
+                        Log.Information($"Команда из {users.Count} человек добавлена в очередь");
+                        if (!isAnalyzingRunning)
+                        {
+                            isAnalyzingRunning = true;
+                            _ = Task.Run(AnalyzeQueue);
+                        }
+                        await initiator.SendMessageAsync($"Команда добавлена в очередь. В очереди {queue.Sum(list => list.Count)} человек");
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Information($"Ошибка добавления команды из {users.Count} человек в очередь");
+                    }
+                }
+            }
+
+            await RespondAsync("Вы приняли приглашение", ephemeral: true);
+        }
+
+        [ComponentInteraction("decline_*")]
+        public async Task DeclineAsync(string userIdStr)
+        {
+            var userId = ulong.Parse(userIdStr);
+            if (PendingConfirmations.TryGetValue(userId, out var info))
+            {
+                var (team, initiator) = info;
+                PendingConfirmations.Remove(userId);
+
+                await initiator.SendMessageAsync($"{Context.User.Username} отклонил приглашение. Команда не будет добавлена в очередь.");
+            }
+
+            await RespondAsync("Вы отклонили приглашение", ephemeral: true);
         }
 
         [SlashCommand("queue-solo", "Соло поиск")]
@@ -49,31 +177,31 @@ namespace bdo_pvp_bot.Commands.Queue
                 await FollowupAsync("Нужно выбрать персонажа /select-character", ephemeral: true);
                 return;
             }
-            else if (queue.Any(u => u.DiscordId == userGuild.Id))
+            else if (queue.Any(team => team.Any(u => u.DiscordId == userGuild.Id)))
             {
-                await FollowupAsync("Вы уже в очереди -_-", ephemeral: true);
+                await FollowupAsync("Вы уже в очереди", ephemeral: true);
                 return;
             }
             else if (userDb.IsInMatch)
             {
-                await FollowupAsync("Вы уже в матче -_-", ephemeral: true);
+                await FollowupAsync("Вы уже в матче", ephemeral: true);
                 return;
             }
 
             try
             {
-                queue.Add(userDb);
+                queue.Add(new List<User>{ userDb });
                 Log.Information($"{userGuild.DisplayName} Входит в очередь");
-                await FollowupAsync("Вы добавлены в очередь", ephemeral: true);
+                await FollowupAsync($"Вы добавлены в очередь. В очереди {queue.Sum(list => list.Count)} человек", ephemeral: true);
             } catch(Exception ex)
             {
                 Log.Error(ex, $"{userGuild.DisplayName} Ошибка входа в очередь");
                 await FollowupAsync("Ошибка поиска", ephemeral: true);
             }
 
-            if (!isAnalyzing)
+            if (!isAnalyzingRunning)
             {
-                isAnalyzing = true;
+                isAnalyzingRunning = true;
                 _ = Task.Run(AnalyzeQueue);
             }
         }
@@ -88,9 +216,11 @@ namespace bdo_pvp_bot.Commands.Queue
 
             await DeferAsync(ephemeral: true);
 
-            if (!queue.Any(u => u.Id == userDb.Id))
+            var teamToRemove = queue.FirstOrDefault(team => team.Any(u => u.Id == userDb.Id));
+
+            if (teamToRemove == null)
             {
-                await FollowupAsync("Вас нет в очереди -_-", ephemeral: true);
+                await FollowupAsync("Вас нет в очереди", ephemeral: true);
                 return;
             }
             else if (userDb.IsInMatch)
@@ -98,11 +228,12 @@ namespace bdo_pvp_bot.Commands.Queue
                 await FollowupAsync("Вы участвуете в формировании матча, выход из очереди невозможен", ephemeral: true);
                 return;
             }
+
             try
             {
-                if (queue.Remove(userDb))
+                if (queue.Remove(teamToRemove))
                 {
-                    Log.Information($"{userGuild.DisplayName} Попытка выйти из очереди");
+                    Log.Information($"{userGuild.DisplayName} Попытка выйти из очереди удалась");
                     await FollowupAsync("Вы покинули очередь", ephemeral: true);
                 }
                 else
@@ -116,103 +247,147 @@ namespace bdo_pvp_bot.Commands.Queue
                 Log.Error(ex,$"{userGuild.DisplayName} Попытка выйти из очереди не удалась");
                 await FollowupAsync("Ошибка", ephemeral: true);
             }
-            
         }
 
         private async Task AnalyzeQueue()
         {
-            while (true)
+            isAnalyzing = true;
+            while (isAnalyzing)
             {
-                if (queue.Count >= MatchSize)
+                if (queue.Sum(team => team.Count) >= MatchSize)
                 {
                     Log.Information("Попытка создать матч");
-                    var matchPlayers = queue.Take(MatchSize).ToList();
-                    queue.RemoveRange(0, MatchSize);
-                    using (var scope = _scopeFactory.CreateScope())
+                    var matchTeams = new List<List<User>>();
+                    var totalPlayers = 0;
+
+                    foreach (var team in queue.ToList())
                     {
-                        var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
-                        var scopedSolareService = scope.ServiceProvider.GetRequiredService<SolareService>();
-
-                        foreach (var matchPlayer in matchPlayers)
+                        if (team.Count == 2 && matchTeams.Count(t => t.Count == 2) >= 2)
                         {
-                            matchPlayer.IsInMatch = true;
-                            await scopedUserService.UpdateUserAsync(matchPlayer);
+                            continue;
                         }
 
-                        var (team1, team2) = DistributePlayers(matchPlayers, TeamSize, 100);
-
-                        if (team1.Count != TeamSize || team2.Count != TeamSize)
+                        if (totalPlayers + team.Count <= MatchSize)
                         {
-                            foreach (var player in matchPlayers)
+                            matchTeams.Add(team);
+                            totalPlayers += team.Count;
+                            queue.Remove(team);
+                        }
+                        if (totalPlayers == MatchSize)
+                            break;
+                    }
+
+                    if (totalPlayers == MatchSize)
+                    {
+                        var matchPlayers = matchTeams.SelectMany(t => t).ToList();
+
+                        using (var scope = _scopeFactory.CreateScope())
+                        {
+                            var scopedUserService = scope.ServiceProvider.GetRequiredService<UserService>();
+                            var scopedSolareService = scope.ServiceProvider.GetRequiredService<SolareService>();
+
+                            foreach (var matchPlayer in matchPlayers)
                             {
-                                player.IsInMatch = false;
-                                await scopedUserService.UpdateUserAsync(player);
+                                matchPlayer.IsInMatch = true;
+                                await scopedUserService.UpdateUserAsync(matchPlayer);
                             }
-                            queue.AddRange(matchPlayers);
-                            Log.Information("Неудачная попытка создать матч");
-                        }
-                        else
-                        {
-                            var resultChannel = await _queueHelper.CreateMatchAsync(team1, team2, Context.Guild, scopedSolareService);
-                            if (resultChannel != null)
+
+                            var (team1, team2) = DistributeTeams(matchTeams, TeamSize, maxEloDifference);
+
+                            if (team1.Count != TeamSize || team2.Count != TeamSize)
                             {
-                                var team1Mentions = string.Join(", ", team1.Select(user =>
-                                    $"{Context.Guild.GetUser(user.DiscordId).Mention}({user.Nickname})"));
-
-                                var team2Mentions = string.Join(", ", team2.Select(user =>
-                                    $"{Context.Guild.GetUser(user.DiscordId).Mention}({user.Nickname})"));
-
-                                try
+                                foreach (var player in matchPlayers)
                                 {
-                                    var embed = new EmbedBuilder()
-                                        .WithTitle("Информация о матче")
-                                        .WithDescription($"Хост {matchPlayers.FirstOrDefault().Nickname}")
-                                        .AddField($"Команда 1 ", $"Капитан - {team1.FirstOrDefault().Nickname}", inline: false)
-                                        .AddField("-", team1Mentions, inline: false)
-                                        .AddField($"Команда 2 ", $"Капитан - {team2.FirstOrDefault().Nickname}", inline: false)
-                                        .AddField("-", team2Mentions, inline: false)
-                                        .WithColor(Color.Blue);
-
-                                    var message = await resultChannel[0].SendMessageAsync(embed: embed.Build());
-                                    var alarmMessage = await resultChannel[1].SendMessageAsync("Капитаны команд голосуют за исход матча!");
-
-                                    IEmote emote1 = new Emoji("1️⃣");
-                                    IEmote emote2 = new Emoji("2️⃣");
-                                    await alarmMessage.AddReactionAsync(emote1);
-                                    await alarmMessage.AddReactionAsync(emote2);
+                                    player.IsInMatch = false;
+                                    await scopedUserService.UpdateUserAsync(player);
                                 }
-                                catch (Exception ex)
+                                queue.AddRange(matchTeams);
+                                Log.Information("Неудачная попытка создать матч");
+                                maxEloDifference += EloDifferenceIncrement;
+                            }
+                            else
+                            {
+                                var resultChannel = await _queueHelper.CreateMatchAsync(team1, team2, Context.Guild, scopedSolareService);
+                                if (resultChannel != null)
                                 {
-                                    Log.Error(ex, "Ошибка рассылки о матче");
-                                }
+                                    var team1Mentions = string.Join(", ", team1.Select(user =>
+                                        $"{Context.Guild.GetUser(user.DiscordId).Mention}({user.Nickname})"));
 
+                                    var team2Mentions = string.Join(", ", team2.Select(user =>
+                                        $"{Context.Guild.GetUser(user.DiscordId).Mention}({user.Nickname})"));
+
+                                    try
+                                    {
+                                        var embed = new EmbedBuilder()
+                                            .WithTitle("Информация о матче")
+                                            .WithDescription($"Хост {matchPlayers.FirstOrDefault().Nickname}")
+                                            .AddField($"Команда 1 ", $"Капитан - {team1.FirstOrDefault().Nickname}", inline: false)
+                                            .AddField("-", team1Mentions, inline: false)
+                                            .AddField($"Команда 2 ", $"Капитан - {team2.FirstOrDefault().Nickname}", inline: false)
+                                            .AddField("-", team2Mentions, inline: false)
+                                            .WithColor(Color.Blue);
+
+                                        var message = await resultChannel[0].SendMessageAsync(embed: embed.Build());
+                                        var alarmMessage = await resultChannel[1].SendMessageAsync("Капитаны команд голосуют за исход матча!");
+
+                                        IEmote emote1 = new Emoji("1️⃣");
+                                        IEmote emote2 = new Emoji("2️⃣");
+                                        await alarmMessage.AddReactionAsync(emote1);
+                                        await alarmMessage.AddReactionAsync(emote2);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        Log.Error(ex, "Ошибка рассылки о матче");
+                                    }
+                                    maxEloDifference = 100;
+                                }
                             }
                         }
                     }
+                    else
+                        Log.Information("Недостаточно игроков для создания матча");
+                }
+                else
+                {
+                    Log.Information("Недостаточно игроков в очереди, остановка анализа");
+                    isAnalyzing = false;
                 }
                 await Task.Delay(5000);
             }
+            isAnalyzingRunning = false;
         }
-        private (List<User> team1, List<User> team2) DistributePlayers(List<User> players, int teamSize, int maxEloDifference)
+        private (List<User> team1, List<User> team2) DistributeTeams(List<List<User>> teams, int teamSize, int maxEloDifference)
         {
             var team1 = new List<User>();
             var team2 = new List<User>();
+            var temporarilyRemovedTeams = new List<List<User>>();
 
-            foreach (var player in players)
+            foreach (var team in teams)
             {
-                var test1 = team1.Count < teamSize;
-                var test2 = !team1.Any(p => p.CurrentCharacter.Class.Name == player.CurrentCharacter.Class.Name && p.CurrentCharacter.ClassType == player.CurrentCharacter.ClassType);
-                var test3 = (team1.Count == 0 || Math.Abs(team1.Average(p => p.CurrentCharacter.Elo) - player.CurrentCharacter.Elo) <= maxEloDifference);
-                if (test1 && test2 &&
-                    test3)
+                if (team1.Count + team.Count <= teamSize &&
+                    !team1.Any(p => team.Any(t => t.CurrentCharacter.Class.Name == p.CurrentCharacter.Class.Name && t.CurrentCharacter.ClassType == p.CurrentCharacter.ClassType)) &&
+                    (team1.Count == 0 || Math.Abs(team1.Average(p => p.CurrentCharacter.Elo) - team.Average(t => t.CurrentCharacter.Elo)) <= maxEloDifference))
                 {
-                    team1.Add(player);
+                    team1.AddRange(team);
+                    temporarilyRemovedTeams.Add(team);
                 }
-                else if (team2.Count < teamSize && !team2.Any(p => p.CurrentCharacter.Class.Name == player.CurrentCharacter.Class.Name && p.CurrentCharacter.ClassType == player.CurrentCharacter.ClassType) &&
-                         (team2.Count == 0 || Math.Abs(team2.Average(p => p.CurrentCharacter.Elo) - player.CurrentCharacter.Elo) <= maxEloDifference))
+                else if (team2.Count + team.Count <= teamSize &&
+                         !team2.Any(p => team.Any(t => t.CurrentCharacter.Class.Name == p.CurrentCharacter.Class.Name && t.CurrentCharacter.ClassType == p.CurrentCharacter.ClassType)) &&
+                         (team2.Count == 0 || Math.Abs(team2.Average(p => p.CurrentCharacter.Elo) - team.Average(t => t.CurrentCharacter.Elo)) <= maxEloDifference))
                 {
-                    team2.Add(player);
+                    team2.AddRange(team);
+                    temporarilyRemovedTeams.Add(team);
                 }
+            }
+
+            if (team1.Count != teamSize || team2.Count != teamSize)
+            {
+                foreach (var team in temporarilyRemovedTeams)
+                {
+                    queue.Add(team);
+                }
+                team1.Clear();
+                team2.Clear();
             }
 
             return (team1, team2);
