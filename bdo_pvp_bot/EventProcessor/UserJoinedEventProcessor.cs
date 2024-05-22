@@ -17,7 +17,7 @@ namespace bdo_pvp_bot.EventProcessor
 
             if (userCheck == null)
                 return;
-            if (userCheck.Characters.Count >= 0 && ((userCheck.Characters.Any(c => c.Class.Name == "Archer")) || (userCheck.Characters.Any(c => c.ClassType != null))))
+            if (userCheck.Characters.Any(c => c.Class != null))
             {
                 await user.AddRoleAsync(user.Guild.Roles.FirstOrDefault(r => r.Name == "User"));
                 await user.AddRoleAsync(user.Guild.Roles.FirstOrDefault(r => r.Name == "Player"));

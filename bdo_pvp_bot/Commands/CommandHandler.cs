@@ -116,8 +116,6 @@ namespace bdo_pvp_bot.Commands
                     await processor.DeleteCharProcess(component);
                 else if (component.Data.CustomId == "selectChar")
                     await processor.SelectClassMenuProcess(component);
-                else if (ccreateCharRedex.IsMatch(component.Data.CustomId))
-                    await processor.EndAddCharacterAsync(component);
 
             }
         }

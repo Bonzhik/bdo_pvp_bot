@@ -39,7 +39,7 @@ namespace bdo_pvp_bot.Services.DbServices
             try
             {
                 _context.SolareMatches.Update(solareMatch);
-                _context.SaveChanges();
+                await _context.SaveChangesAsync();
                 return solareMatch;
             }
             catch (Exception ex)

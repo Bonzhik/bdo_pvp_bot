@@ -32,12 +32,11 @@ namespace bdo_pvp_bot.Commands
             }
             var id = Context.User.Id;
             var user = await _userService.FindAsync(id);
-            var CharClass = (user.CurrentCharacter.ClassType != null) ? user.CurrentCharacter.ClassType.ToString() : "";
             var builder = new EmbedBuilder()
                 .WithTitle("Информация об игроке")
                 .WithDescription("Статистика на текущем персонаже")
                 .AddField("Player", user.Nickname, true)
-                .AddField("Class", $"{user.CurrentCharacter.Class.Name}(" + $"{CharClass})", true)
+                .AddField("Class", $"{user.CurrentCharacter.Class.Name}", true)
                 .AddField("Elo", user.CurrentCharacter.Elo, true)
                 .WithColor(Color.Green);
 
@@ -129,20 +128,29 @@ namespace bdo_pvp_bot.Commands
                     .WithPlaceholder("Выберите класс - 2 страница")
                     .WithMinValues(1)
                     .WithMaxValues(1);
+                var selectMenu3 = new SelectMenuBuilder()
+                    .WithCustomId($"createCharId-{createdCharacter.Id}-3")
+                    .WithPlaceholder("Выберите класс - 3 страница")
+                    .WithMinValues(1)
+                    .WithMaxValues(1);
 
                 var classes = await _characterService.GetCharacterClassesAsync();
 
-                var classPage1 = classes.Take(25).ToList();
-                var classPage2 = classes.Skip(25).Take(2).ToList();
+                var classPage1 = classes.Take(17).ToList();
+                var classPage2 = classes.Skip(17).Take(17).ToList();
+                var classPage3 = classes.Skip(17).Take(17).ToList();
 
                 foreach (var charClass in classPage1)
                     selectMenu1.AddOption(charClass.Name, charClass.Id.ToString());
                 foreach (var charClass in classPage2)
                     selectMenu2.AddOption(charClass.Name, charClass.Id.ToString());
+                foreach (var charClass in classPage3)
+                    selectMenu3.AddOption(charClass.Name, charClass.Id.ToString());
 
                 var row1 = new ActionRowBuilder().WithSelectMenu(selectMenu1);
                 var row2 = new ActionRowBuilder().WithSelectMenu(selectMenu2);
-                var rows = new List<ActionRowBuilder>() { row1, row2 };
+                var row3 = new ActionRowBuilder().WithSelectMenu(selectMenu3);
+                var rows = new List<ActionRowBuilder>() { row1, row2, row3 };
 
                 var builder = new ComponentBuilder()
                     .WithRows(rows).Build();
@@ -186,10 +194,7 @@ namespace bdo_pvp_bot.Commands
                 .WithMaxValues(1);
 
             foreach (var character in characters)
-            {
-                string classTypeName = character.ClassType != null ? classTypeName = character.ClassType.ToString() : classTypeName = "";
-                selectMenu.AddOption($"{character.Class.Name}(" + $"{classTypeName})", character.Id.ToString());
-            }
+                selectMenu.AddOption($"{character.Class.Name}", character.Id.ToString());
 
             var builder = new ComponentBuilder()
                 .WithSelectMenu(selectMenu);
@@ -228,8 +233,7 @@ namespace bdo_pvp_bot.Commands
 
             foreach (var character in characters)
             {
-                string classTypeName = character.ClassType != null ? classTypeName = character.ClassType.ToString() : classTypeName = "";
-                selectMenu.AddOption($"{character.Class.Name}(" + $"{classTypeName})", character.Id.ToString());
+                selectMenu.AddOption($"{character.Class.Name}", character.Id.ToString());
             }
 
             var builder = new ComponentBuilder()

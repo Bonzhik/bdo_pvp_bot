@@ -3,7 +3,9 @@ using Discord;
 using Discord.Interactions;
 using Domain.Entities;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql.EntityFrameworkCore.PostgreSQL.Query.Expressions.Internal;
 using Serilog;
+using System.Runtime.CompilerServices;
 
 namespace bdo_pvp_bot.Commands.Queue
 {
@@ -15,13 +17,13 @@ namespace bdo_pvp_bot.Commands.Queue
         private readonly QueueHelper _queueHelper;
 
         private static readonly List<List<User>> queue = new List<List<User>>();
-        private const int TeamSize = 2;
+        private const int TeamSize = 1;
         private const int MatchSize = TeamSize * 2;
         private bool isAnalyzing = false;
         private bool isAnalyzingRunning = false;
         private int maxEloDifference = 100;
         private const int EloDifferenceIncrement = 10;
-        private static Dictionary<ulong, (List<IUser> team, IUser initiator)> PendingConfirmations = new Dictionary<ulong, (List<IUser> team, IUser initiator)>();
+        private static Dictionary<ulong, (List<IGuildUser> team, IGuildUser initiator)> PendingConfirmations = new Dictionary<ulong, (List<IGuildUser> team, IGuildUser initiator)>();
 
         public QueueModule(SolareService solareService, UserService userService, IServiceScopeFactory scopeFactory, QueueHelper queueHelper)
         {
@@ -34,19 +36,26 @@ namespace bdo_pvp_bot.Commands.Queue
 
 
         [SlashCommand("queue-duo", "Поиск вдвоем")]
-        public async Task QueueDuo(IUser user)
+        public async Task QueueDuo(IGuildUser user)
         {
             Log.Information($"Попытка создать пати {Context.User.GlobalName}, {user.GlobalName}");
 
-            var initiator = Context.User;
+            var initiator = Context.User as IGuildUser;
+            var roleId = Context.Guild.Roles.FirstOrDefault(r => r.Name == "Player").Id;
+            var team = new List<IGuildUser> { initiator, user };
 
-            if ( user.Id == initiator.Id )
+            if (team.Any(u => !u.RoleIds.Contains(roleId)))
+            {
+                await RespondAsync("Не все корректно добавили персонажа", ephemeral: true);
+                return;
+            }
+
+
+            if ( user.Id == initiator.Id || user.IsBot )
             {
                 await RespondAsync("Нельзя пригласить себя", ephemeral: true);
                 return;
             }
-
-            var team = new List<IUser> { initiator, user };
 
             await RespondAsync("Приглашение отправлены", ephemeral: true);
 
@@ -54,26 +63,32 @@ namespace bdo_pvp_bot.Commands.Queue
         }
 
         [SlashCommand("queue-trio", "Поиск втроём")]
-        public async Task QueueTrio(IUser user1, IUser user2)
+        public async Task QueueTrio(IGuildUser user1, IGuildUser user2)
         {
             Log.Information($"Попытка создать пати {Context.User.GlobalName}, {user1.GlobalName}, {user2.GlobalName}");
 
-            var initiator = Context.User;
+            var initiator = Context.User as IGuildUser;
+            var roleId = Context.Guild.Roles.FirstOrDefault(r => r.Name == "Player").Id;
+            var team = new List<IGuildUser> { initiator, user1, user2 };
 
-            if( initiator.Id == user1.Id || initiator.Id == user2.Id || user1.Id == user2.Id)
+            if (team.Any(u => !u.RoleIds.Contains(roleId)))
+            {
+                await RespondAsync("Не все корректно добавили персонажа", ephemeral: true);
+                return;
+            }
+
+            if ( initiator.Id == user1.Id || initiator.Id == user2.Id || user1.Id == user2.Id || user1.IsBot || user2.IsBot)
             {
                 await RespondAsync("Команда должна состоять из уникальных игроков", ephemeral: true);
                 return;
             }
-
-            var team = new List<IUser> { initiator, user1, user2 };
 
             await RespondAsync("Приглашение отправлены", ephemeral: true);
 
             await SendConfirmationRequest(team, initiator);
         }
 
-        private async Task SendConfirmationRequest(List<IUser> team, IUser initiator)
+        private async Task SendConfirmationRequest(List<IGuildUser> team, IGuildUser initiator)
         {
             foreach (var user in team.Skip(1))
             {
@@ -91,6 +106,8 @@ namespace bdo_pvp_bot.Commands.Queue
         [ComponentInteraction("confirm_*")]
         public async Task ConfirmAsync(string userIdStr)
         {
+            await DeferAsync();
+            var channel = Context.Channel as IDMChannel;
             var userId = ulong.Parse(userIdStr);
             if (PendingConfirmations.TryGetValue(userId, out var info))
             {
@@ -106,16 +123,25 @@ namespace bdo_pvp_bot.Commands.Queue
                         if (queue.Any(team => team.Any(u => u.DiscordId == user.Id)))
                         {
                             await initiator.SendMessageAsync($"{user.GlobalName} уже находится в очереди. Поиск не будет запущен");
+                            await ClearBotMessage(channel);
+                            return;
+                        }
+                        if (userTeam.CurrentCharacter == null)
+                        {
+                            await initiator.SendMessageAsync($"{user.GlobalName} не выбрал персонажа. Поиск не будет запущен");
+                            await ClearBotMessage(channel);
                             return;
                         }
                         if (userTeam.IsInMatch == true)
                         {
                             await initiator.SendMessageAsync($"{user.GlobalName} уже находится в матче. Поиск не будет запущен");
+                            await ClearBotMessage(channel);
                             return;
                         }
-                        if (users.Any(u => u.CurrentCharacter.Class.Name == userTeam.CurrentCharacter.Class.Name && u.CurrentCharacter.ClassType == userTeam.CurrentCharacter.ClassType))
+                        if (users.Any(u => u.CurrentCharacter.Class.Name == userTeam.CurrentCharacter.Class.Name))
                         {
                             await initiator.SendMessageAsync($"В команде не должно быть одинаковых персонажей");
+                            await ClearBotMessage(channel);
                             return;
                         }
                         users.Add(userTeam);
@@ -138,12 +164,17 @@ namespace bdo_pvp_bot.Commands.Queue
                 }
             }
 
-            await RespondAsync("Вы приняли приглашение", ephemeral: true);
+            await FollowupAsync("Вы приняли приглашение", ephemeral: true);
+            await ClearBotMessage(channel);
+
         }
 
         [ComponentInteraction("decline_*")]
         public async Task DeclineAsync(string userIdStr)
         {
+            await DeferAsync();
+            var channel = Context.Channel as IDMChannel;
+
             var userId = ulong.Parse(userIdStr);
             if (PendingConfirmations.TryGetValue(userId, out var info))
             {
@@ -153,7 +184,9 @@ namespace bdo_pvp_bot.Commands.Queue
                 await initiator.SendMessageAsync($"{Context.User.Username} отклонил приглашение. Команда не будет добавлена в очередь.");
             }
 
-            await RespondAsync("Вы отклонили приглашение", ephemeral: true);
+            await FollowupAsync("Вы отклонили приглашение", ephemeral: true);
+            await ClearBotMessage(channel);
+
         }
 
         [SlashCommand("queue-solo", "Соло поиск")]
@@ -365,14 +398,14 @@ namespace bdo_pvp_bot.Commands.Queue
             foreach (var team in teams)
             {
                 if (team1.Count + team.Count <= teamSize &&
-                    !team1.Any(p => team.Any(t => t.CurrentCharacter.Class.Name == p.CurrentCharacter.Class.Name && t.CurrentCharacter.ClassType == p.CurrentCharacter.ClassType)) &&
+                    !team1.Any(p => team.Any(t => t.CurrentCharacter.Class.Name == p.CurrentCharacter.Class.Name)) &&
                     (team1.Count == 0 || Math.Abs(team1.Average(p => p.CurrentCharacter.Elo) - team.Average(t => t.CurrentCharacter.Elo)) <= maxEloDifference))
                 {
                     team1.AddRange(team);
                     temporarilyRemovedTeams.Add(team);
                 }
                 else if (team2.Count + team.Count <= teamSize &&
-                         !team2.Any(p => team.Any(t => t.CurrentCharacter.Class.Name == p.CurrentCharacter.Class.Name && t.CurrentCharacter.ClassType == p.CurrentCharacter.ClassType)) &&
+                         !team2.Any(p => team.Any(t => t.CurrentCharacter.Class.Name == p.CurrentCharacter.Class.Name)) &&
                          (team2.Count == 0 || Math.Abs(team2.Average(p => p.CurrentCharacter.Elo) - team.Average(t => t.CurrentCharacter.Elo)) <= maxEloDifference))
                 {
                     team2.AddRange(team);
@@ -391,6 +424,14 @@ namespace bdo_pvp_bot.Commands.Queue
             }
 
             return (team1, team2);
+        }
+        private async Task ClearBotMessage(IDMChannel channel)
+        {
+            var messages = await channel.GetMessagesAsync().FlattenAsync();
+            var botMessage = messages.Where(x => x.Author.Id == Context.Client.CurrentUser.Id);
+
+            foreach (var message in botMessage)
+                await message.DeleteAsync();
         }
     }
 }

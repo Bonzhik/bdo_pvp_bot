@@ -12,7 +12,7 @@ using bdo_pvp_bot.Data;
 namespace bdo_pvp_bot.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20240519221203_Init")]
+    [Migration("20240522130027_Init")]
     partial class Init
     {
         /// <inheritdoc />
@@ -53,9 +53,6 @@ namespace bdo_pvp_bot.Migrations
 
                     b.Property<long?>("ClassId")
                         .HasColumnType("bigint");
-
-                    b.Property<int?>("ClassType")
-                        .HasColumnType("integer");
 
                     b.Property<int>("Elo")
                         .HasColumnType("integer");

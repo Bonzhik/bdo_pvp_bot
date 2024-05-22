@@ -1,7 +1,6 @@
 ﻿using bdo_pvp_bot.Services.DbServices;
 using Discord;
 using Discord.WebSocket;
-using Domain.Enums;
 
 namespace bdo_pvp_bot.EventProcessor
 {
@@ -39,41 +38,20 @@ namespace bdo_pvp_bot.EventProcessor
 
             if (await _characterService.UpdateCharacterAsync(character) != null)
             {
-                if (character.Class.Name == "Лучник" || character.Class.Name == "Сколярия\n" || character.Class.Name == "Шай")
-                {
                     var guildUser = component.User as SocketGuildUser;
                     var role = guildUser.Guild.Roles.FirstOrDefault(n => n.Name == "Player");
                     await guildUser.AddRoleAsync(role.Id);
 
                     await component.FollowupAsync("Успех", ephemeral: true);
                     return;
-                }
-                await component.FollowupAsync("Выберите стойку", ephemeral: true, components: builder.Build());
-            }
-            else
-                await component.FollowupAsync("Ошибка", ephemeral: true);
-        }
-        public async Task EndAddCharacterAsync(SocketMessageComponent component)
-        {
-            var parts = component.Data.CustomId.Split('-');
-            int idValue = int.Parse(parts[1]);
-            var character = await _characterService.GetCharacterAsync(idValue);
-            character.ClassType = Enum.Parse<ClassType>(component.Data.Values.FirstOrDefault());
-
-            await component.UpdateAsync(msg => { msg.Components = null; msg.Content = "Стойка выбрана"; });
-
-            if (await _characterService.UpdateCharacterAsync(character) != null)
-            {
-                var guildUser = component.User as SocketGuildUser;
-                var role = guildUser.Guild.Roles.FirstOrDefault(n => n.Name == "Player");
-                await guildUser.AddRoleAsync(role.Id);
-                await component.FollowupAsync("Успех", ephemeral: true);
             }
             else
                 await component.FollowupAsync("Ошибка", ephemeral: true);
         }
         public async Task SelectClassMenuProcess(SocketMessageComponent component)
         {
+            await component.UpdateAsync(msg => { msg.Components = null; msg.Content = "Персонаж выбран"; });
+
             long idChar = long.Parse(component.Data.Values.FirstOrDefault());
             ulong userId = component.User.Id;
             var user = await _userService.FindAsync(userId);
@@ -81,9 +59,9 @@ namespace bdo_pvp_bot.EventProcessor
             user.CurrentCharacter = character;
 
             if (await _userService.UpdateUserAsync(user))
-                await component.RespondAsync("Успех", ephemeral: true);
+                await component.FollowupAsync("Успех", ephemeral: true);
             else
-                await component.RespondAsync("Ошибка", ephemeral: false);
+                await component.FollowupAsync("Ошибка", ephemeral: false);
         }
         public async Task DeleteCharProcess(SocketMessageComponent component)
         {

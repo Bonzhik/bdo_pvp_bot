@@ -87,7 +87,6 @@ namespace bdo_pvp_bot.Migrations
                         .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
                     Elo = table.Column<int>(type: "integer", nullable: false),
                     ClassId = table.Column<long>(type: "bigint", nullable: true),
-                    ClassType = table.Column<int>(type: "integer", nullable: true),
                     UserId = table.Column<long>(type: "bigint", nullable: false)
                 },
                 constraints: table =>

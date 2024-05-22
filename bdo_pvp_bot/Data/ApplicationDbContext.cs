@@ -11,8 +11,6 @@ namespace bdo_pvp_bot.Data
         {
             builder.AddSerilog(Log.Logger);
         });
-
-
         protected override void OnConfiguring(DbContextOptionsBuilder options)
         {
             options.UseNpgsql("User ID = postgres; Password=1234;Server=localhost;Port=5432;Database=BotDb")

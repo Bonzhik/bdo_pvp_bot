@@ -51,9 +51,6 @@ namespace bdo_pvp_bot.Migrations
                     b.Property<long?>("ClassId")
                         .HasColumnType("bigint");
 
-                    b.Property<int?>("ClassType")
-                        .HasColumnType("integer");
-
                     b.Property<int>("Elo")
                         .HasColumnType("integer");
 
